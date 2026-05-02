@@ -2,10 +2,11 @@ FROM node:20-bullseye
 
 WORKDIR /app
 
-# install minimal deps untuk puppeteer + xvfb
+# install deps untuk puppeteer + chromium
 RUN apt-get update && apt-get install -y \
     xvfb \
     chromium \
+    chromium-driver \
     fonts-liberation \
     libatk-bridge2.0-0 \
     libatk1.0-0 \
@@ -27,9 +28,12 @@ RUN apt-get update && apt-get install -y \
     libxi6 \
     libxtst6 \
     ca-certificates \
+    wget \
     --no-install-recommends && rm -rf /var/lib/apt/lists/*
 
-# pakai chromium, bukan chrome manual
+# 🔥 pastikan chromium path valid (auto detect)
+RUN ln -sf /usr/bin/chromium /usr/bin/chromium-browser || true
+
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 
