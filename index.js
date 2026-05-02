@@ -30,6 +30,8 @@ app.get("/", (req, res) => {
 if (process.env.NODE_ENV !== 'development') {
   let server = app.listen(port, () => {
     console.log(`Server running on port ${port}`);
+    console.log(`Domain: ${domain}`);
+    console.log(`Auth required: ${authToken !== null}`);
   });
   try {
     server.timeout = global.timeOut;
@@ -39,21 +41,14 @@ if (process.env.NODE_ENV !== 'development') {
 /* ================== BROWSER ================== */
 async function createBrowser(proxyServer = null) {
   const connectOptions = {
-    headless: true, // 🔥 lebih stabil di server
+    headless: false, // tetap sesuai logic kamu
     turnstile: true,
     connectOption: { defaultViewport: null },
     disableXvfb: false,
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-gpu",
-      "--disable-blink-features=AutomationControlled"
-    ]
   };
 
   if (proxyServer) {
-    connectOptions.args.push(`--proxy-server=${proxyServer}`);
+    connectOptions.args = [`--proxy-server=${proxyServer}`];
   }
 
   const { browser } = await connect(connectOptions);
@@ -64,9 +59,7 @@ async function createBrowser(proxyServer = null) {
   await page.setRequestInterception(true);
   page.on('request', (req) => {
     const type = req.resourceType();
-
-    // ❌ jangan blok CSS & font
-    if (["image", "media"].includes(type)) {
+    if (["image", "stylesheet", "font", "media"].includes(type)) {
       req.abort();
     } else {
       req.continue();
@@ -77,7 +70,7 @@ async function createBrowser(proxyServer = null) {
 }
 
 /* ================== IMPORT ================== */
-const turnstile = require('./turnstile');
+const turnstile = require('./turnstile'); // ✅ FIX PATH
 
 /* ================== TURNSTILE ================== */
 app.post('/turnstile', async (req, res) => {
@@ -107,7 +100,6 @@ app.post('/turnstile', async (req, res) => {
     result = await turnstile(data, page).then(t => ({ token: t }));
 
   } catch (err) {
-    console.error("ERROR:", err);
     result = { code: 500, message: err.message };
   } finally {
     if (browser) {
