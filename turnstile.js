@@ -8,7 +8,7 @@ async function turnstile({ domain, proxy, siteKey }, page) {
 
   const cl = setTimeout(() => {
     if (!isResolved) {
-      console.error("⏱️ Turnstile timeout");
+      console.error("Turnstile timeout");
     }
   }, timeout);
 
@@ -58,40 +58,32 @@ window.onloadTurnstileCallback = function() {
 </html>
 `;
 
-    // ❌ JANGAN set interception lagi kalau sudah di createBrowser
-    // await page.setRequestInterception(true);
-
+    // ❌ jangan set interception lagi (sudah di index.js)
     page.removeAllListeners("request");
 
     page.on("request", (request) => {
       try {
-
         if (
           [domain, domain + "/"].includes(request.url()) &&
           request.resourceType() === "document"
         ) {
-
           request.respond({
             status: 200,
             contentType: "text/html",
             body: htmlContent,
           });
-
         } else {
           request.continue();
         }
-
-      } catch (err) {
-        console.error("❌ Request handler error:", err.message);
+      } catch {
         try { request.continue(); } catch {}
       }
     });
 
-    console.log("➡️ Navigating to:", domain);
-
     await page.goto(domain, { waitUntil: "domcontentloaded" });
 
-    console.log("⏳ Waiting for Turnstile...");
+    // 🔥 delay kecil biar stabil
+    await page.waitForTimeout(1000);
 
     await page.waitForSelector('[name="cf-response"]', { timeout });
 
@@ -103,22 +95,16 @@ window.onloadTurnstileCallback = function() {
       }
     });
 
-    console.log("✅ Token:", token);
-
     isResolved = true;
     clearTimeout(cl);
 
-    if (!token || token.length < 10) {
-      throw new Error("Failed to get token");
-    }
+    if (!token || token.length < 10) throw new Error("Failed to get token");
 
     return token;
 
   } catch (e) {
 
     clearTimeout(cl);
-    console.error("❌ Turnstile error:", e);
-
     throw e;
 
   }
