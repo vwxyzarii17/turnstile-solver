@@ -41,14 +41,21 @@ if (process.env.NODE_ENV !== 'development') {
 /* ================== BROWSER ================== */
 async function createBrowser(proxyServer = null) {
   const connectOptions = {
-    headless: false, // tetap sesuai logic kamu
+    headless: true, // ✅ FIX WAJIB (Docker friendly)
     turnstile: true,
     connectOption: { defaultViewport: null },
     disableXvfb: false,
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-gpu",
+      "--disable-blink-features=AutomationControlled"
+    ]
   };
 
   if (proxyServer) {
-    connectOptions.args = [`--proxy-server=${proxyServer}`];
+    connectOptions.args.push(`--proxy-server=${proxyServer}`);
   }
 
   const { browser } = await connect(connectOptions);
@@ -56,10 +63,13 @@ async function createBrowser(proxyServer = null) {
 
   await page.goto('about:blank');
 
+  // ✅ interception tetap ada, tapi tidak merusak Turnstile
   await page.setRequestInterception(true);
   page.on('request', (req) => {
     const type = req.resourceType();
-    if (["image", "stylesheet", "font", "media"].includes(type)) {
+
+    // ❌ jangan blok stylesheet/font (bikin Turnstile gagal)
+    if (["image", "media"].includes(type)) {
       req.abort();
     } else {
       req.continue();
@@ -70,7 +80,7 @@ async function createBrowser(proxyServer = null) {
 }
 
 /* ================== IMPORT ================== */
-const turnstile = require('./turnstile'); // ✅ FIX PATH
+const turnstile = require('./turnstile');
 
 /* ================== TURNSTILE ================== */
 app.post('/turnstile', async (req, res) => {
@@ -89,6 +99,8 @@ app.post('/turnstile', async (req, res) => {
   let result, browser;
 
   try {
+    console.log("➡️ Incoming request:", data); // debug
+
     const proxyServer = data.proxy
       ? `${data.proxy.hostname}:${data.proxy.port}`
       : null;
@@ -100,7 +112,13 @@ app.post('/turnstile', async (req, res) => {
     result = await turnstile(data, page).then(t => ({ token: t }));
 
   } catch (err) {
-    result = { code: 500, message: err.message };
+    console.error("❌ ERROR FULL:", err); // debug penting
+
+    result = { 
+      code: 500, 
+      message: err.message,
+      stack: err.stack
+    };
   } finally {
     if (browser) {
       try { await browser.close(); } catch {}
