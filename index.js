@@ -30,8 +30,6 @@ app.get("/", (req, res) => {
 if (process.env.NODE_ENV !== 'development') {
   let server = app.listen(port, () => {
     console.log(`Server running on port ${port}`);
-    console.log(`Domain: ${domain}`);
-    console.log(`Auth required: ${authToken !== null}`);
   });
   try {
     server.timeout = global.timeOut;
@@ -41,7 +39,7 @@ if (process.env.NODE_ENV !== 'development') {
 /* ================== BROWSER ================== */
 async function createBrowser(proxyServer = null) {
   const connectOptions = {
-    headless: true, // ✅ FIX WAJIB (Docker friendly)
+    headless: true, // 🔥 lebih stabil di server
     turnstile: true,
     connectOption: { defaultViewport: null },
     disableXvfb: false,
@@ -63,12 +61,11 @@ async function createBrowser(proxyServer = null) {
 
   await page.goto('about:blank');
 
-  // ✅ interception tetap ada, tapi tidak merusak Turnstile
   await page.setRequestInterception(true);
   page.on('request', (req) => {
     const type = req.resourceType();
 
-    // ❌ jangan blok stylesheet/font (bikin Turnstile gagal)
+    // ❌ jangan blok CSS & font
     if (["image", "media"].includes(type)) {
       req.abort();
     } else {
@@ -99,8 +96,6 @@ app.post('/turnstile', async (req, res) => {
   let result, browser;
 
   try {
-    console.log("➡️ Incoming request:", data); // debug
-
     const proxyServer = data.proxy
       ? `${data.proxy.hostname}:${data.proxy.port}`
       : null;
@@ -112,13 +107,8 @@ app.post('/turnstile', async (req, res) => {
     result = await turnstile(data, page).then(t => ({ token: t }));
 
   } catch (err) {
-    console.error("❌ ERROR FULL:", err); // debug penting
-
-    result = { 
-      code: 500, 
-      message: err.message,
-      stack: err.stack
-    };
+    console.error("ERROR:", err);
+    result = { code: 500, message: err.message };
   } finally {
     if (browser) {
       try { await browser.close(); } catch {}
