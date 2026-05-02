@@ -58,44 +58,44 @@ window.onloadTurnstileCallback = function() {
 </html>
 `;
 
-    // ❌ jangan set interception lagi (sudah di index.js)
+    await page.setRequestInterception(true);
+
     page.removeAllListeners("request");
 
-    page.on("request", (request) => {
-      try {
-        if (
-          [domain, domain + "/"].includes(request.url()) &&
-          request.resourceType() === "document"
-        ) {
-          request.respond({
-            status: 200,
-            contentType: "text/html",
-            body: htmlContent,
-          });
-        } else {
-          request.continue();
-        }
-      } catch {
-        try { request.continue(); } catch {}
+    page.on("request", async (request) => {
+
+      if ([domain, domain + "/"].includes(request.url()) && request.resourceType() === "document") {
+
+        await request.respond({
+          status: 200,
+          contentType: "text/html",
+          body: htmlContent,
+        });
+
+      } else {
+
+        await request.continue();
+
       }
+
     });
 
     await page.goto(domain, { waitUntil: "domcontentloaded" });
 
-    // 🔥 delay kecil biar stabil
-    await new Promise(r => setTimeout(r, 1000));
-
     await page.waitForSelector('[name="cf-response"]', { timeout });
 
     const token = await page.evaluate(() => {
+
       try {
         return document.querySelector('[name="cf-response"]').value;
       } catch {
         return null;
       }
+
     });
 
     isResolved = true;
+
     clearTimeout(cl);
 
     if (!token || token.length < 10) throw new Error("Failed to get token");
@@ -105,6 +105,7 @@ window.onloadTurnstileCallback = function() {
   } catch (e) {
 
     clearTimeout(cl);
+
     throw e;
 
   }
