@@ -4,10 +4,12 @@
   "description": "Turnstile solver API",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "dev": "NODE_ENV=development node index.js"
   },
   "dependencies": {
-    "express": "^4.19.2",
-    "puppeteer-real-browser": "^1.4.0"
+    "express": "4.19.2",
+    "puppeteer": "22.10.0",
+    "puppeteer-real-browser": "1.4.0"
   }
 }
