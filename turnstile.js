@@ -8,7 +8,7 @@ async function turnstile({ domain, proxy, siteKey }, page) {
 
   const cl = setTimeout(() => {
     if (!isResolved) {
-      console.error("Turnstile timeout");
+      console.error("⏱️ Turnstile timeout");
     }
   }, timeout);
 
@@ -58,53 +58,66 @@ window.onloadTurnstileCallback = function() {
 </html>
 `;
 
-    await page.setRequestInterception(true);
+    // ❌ JANGAN set interception lagi kalau sudah di createBrowser
+    // await page.setRequestInterception(true);
 
     page.removeAllListeners("request");
 
-    page.on("request", async (request) => {
+    page.on("request", (request) => {
+      try {
 
-      if ([domain, domain + "/"].includes(request.url()) && request.resourceType() === "document") {
+        if (
+          [domain, domain + "/"].includes(request.url()) &&
+          request.resourceType() === "document"
+        ) {
 
-        await request.respond({
-          status: 200,
-          contentType: "text/html",
-          body: htmlContent,
-        });
+          request.respond({
+            status: 200,
+            contentType: "text/html",
+            body: htmlContent,
+          });
 
-      } else {
+        } else {
+          request.continue();
+        }
 
-        await request.continue();
-
+      } catch (err) {
+        console.error("❌ Request handler error:", err.message);
+        try { request.continue(); } catch {}
       }
-
     });
 
+    console.log("➡️ Navigating to:", domain);
+
     await page.goto(domain, { waitUntil: "domcontentloaded" });
+
+    console.log("⏳ Waiting for Turnstile...");
 
     await page.waitForSelector('[name="cf-response"]', { timeout });
 
     const token = await page.evaluate(() => {
-
       try {
         return document.querySelector('[name="cf-response"]').value;
       } catch {
         return null;
       }
-
     });
 
-    isResolved = true;
+    console.log("✅ Token:", token);
 
+    isResolved = true;
     clearTimeout(cl);
 
-    if (!token || token.length < 10) throw new Error("Failed to get token");
+    if (!token || token.length < 10) {
+      throw new Error("Failed to get token");
+    }
 
     return token;
 
   } catch (e) {
 
     clearTimeout(cl);
+    console.error("❌ Turnstile error:", e);
 
     throw e;
 
