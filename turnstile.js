@@ -83,7 +83,7 @@ window.onloadTurnstileCallback = function() {
     await page.goto(domain, { waitUntil: "domcontentloaded" });
 
     // 🔥 delay kecil biar stabil
-    await page.waitForTimeout(1000);
+    await new Promise(r => setTimeout(r, 1000));
 
     await page.waitForSelector('[name="cf-response"]', { timeout });
 
