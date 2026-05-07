@@ -262,6 +262,12 @@ app.post('/turnstile', async (req, res) => {
 
   try {
 
+    /*
+    |--------------------------------------------------------------------------
+    | PROXY
+    |--------------------------------------------------------------------------
+    */
+
     const proxyServer =
       data.proxy
         ? `${data.proxy.hostname}:${data.proxy.port}`
@@ -274,23 +280,48 @@ app.post('/turnstile', async (req, res) => {
 
     const page = ctx.page;
 
+    /*
+    |--------------------------------------------------------------------------
+    | PROXY AUTH
+    |--------------------------------------------------------------------------
+    */
+
+    if (
+      data.proxy?.username &&
+      data.proxy?.password
+    ) {
+
+      await page.authenticate({
+
+        username: data.proxy.username,
+
+        password: data.proxy.password
+      });
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | SOLVE
+    |--------------------------------------------------------------------------
+    */
+
     const start = Date.now();
 
-const token =
-  await solveTurnstile(
-    data,
-    page
-  );
+    const token =
+      await solveTurnstile(
+        data,
+        page
+      );
 
-const end = Date.now();
+    const end = Date.now();
 
-const solveTime =
-  ((end - start) / 1000).toFixed(2);
+    const solveTime =
+      ((end - start) / 1000).toFixed(2);
 
-return res.json({
-  token,
-  solveTime: `${solveTime}s`
-});
+    return res.json({
+      token,
+      solveTime: `${solveTime}s`
+    });
 
   } catch (err) {
 
@@ -309,28 +340,4 @@ return res.json({
 
     global.browserLimit++;
   }
-});
-
-/* =========================
-   404
-========================= */
-
-app.use((req, res) => {
-
-  res.status(404).json({
-    message: 'Not Found'
-  });
-
-});
-
-/* =========================
-   START SERVER
-========================= */
-
-app.listen(port, () => {
-
-  console.log(
-    `Server running on ${port}`
-  );
-
 });
