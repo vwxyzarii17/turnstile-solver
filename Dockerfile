@@ -3,6 +3,7 @@ FROM ghcr.io/puppeteer/puppeteer:latest
 WORKDIR /app
 
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV CHROME_PATH=/usr/bin/google-chrome
 
 COPY package*.json ./
 
