@@ -1,121 +1,336 @@
+process.setMaxListeners(0);
+
 const express = require('express');
 const { connect } = require("puppeteer-real-browser");
 
 const app = express();
+
 const port = process.env.PORT || 7860;
-const authToken = process.env.authToken || null;
-const domain = process.env.DOMAIN || `http://localhost:${port}`;
 
-global.browserLimit = Number(process.env.browserLimit) || 3;
-global.timeOut = Number(process.env.timeOut) || 60000;
+/* =========================
+   CONFIG
+========================= */
 
-app.use(express.json({ limit: "50mb" }));
-app.use(express.urlencoded({ extended: true, limit: "50mb" }));
+global.browserLimit = 3;
+global.timeOut = 120000;
+
+/* =========================
+   BODY PARSER
+========================= */
+
+app.use(express.json({
+  limit: "50mb"
+}));
+
+app.use(express.urlencoded({
+  extended: true,
+  limit: "50mb"
+}));
+
+/* =========================
+   HOME
+========================= */
 
 app.get("/", (req, res) => {
+
   res.json({
-    message: "Server is running!",
-    domain: domain,
-    endpoints: {
-      turnstile: `${domain}/turnstile`
-    },
-    status: {
-      browserLimit: global.browserLimit,
-      timeOut: global.timeOut,
-      authRequired: authToken !== null
-    }
+    status: true,
+    message: "Turnstile Solver API Running"
   });
+
 });
 
-if (process.env.NODE_ENV !== 'development') {
-  let server = app.listen(port, () => {
-    console.log(`Server running on port ${port}`);
-    console.log(`Domain: ${domain}`);
-    console.log(`Auth required: ${authToken !== null}`);
-  });
-  try {
-    server.timeout = global.timeOut;
-  } catch {}
-}
+/* =========================
+   CREATE BROWSER
+========================= */
 
-/* ================== BROWSER ================== */
 async function createBrowser(proxyServer = null) {
+
   const connectOptions = {
-    headless: false, // tetap sesuai logic kamu
+
+    headless: false,
+
     turnstile: true,
-    connectOption: { defaultViewport: null },
+
     disableXvfb: false,
+
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu'
+    ],
+
+    connectOption: {
+      defaultViewport: null
+    }
   };
 
   if (proxyServer) {
-    connectOptions.args = [`--proxy-server=${proxyServer}`];
+
+    connectOptions.args.push(
+      `--proxy-server=${proxyServer}`
+    );
   }
 
-  const { browser } = await connect(connectOptions);
-  const [page] = await browser.pages();
+  const { browser } =
+    await connect(connectOptions);
 
-  await page.goto('about:blank');
-
-  await page.setRequestInterception(true);
-  page.on('request', (req) => {
-    const type = req.resourceType();
-    if (["image", "stylesheet", "font", "media"].includes(type)) {
-      req.abort();
-    } else {
-      req.continue();
-    }
-  });
+  const [page] =
+    await browser.pages();
 
   return { browser, page };
 }
 
-/* ================== IMPORT ================== */
-const turnstile = require('./turnstile'); // ✅ FIX PATH
+/* =========================
+   SOLVE TURNSTILE
+========================= */
 
-/* ================== TURNSTILE ================== */
+async function solveTurnstile(
+  { domain, siteKey },
+  page
+) {
+
+  if (!domain) {
+    throw new Error("Missing domain");
+  }
+
+  if (!siteKey) {
+    throw new Error("Missing siteKey");
+  }
+
+  /*
+  |--------------------------------------------------------------------------
+  | CUSTOM TURNSTILE HTML
+  |--------------------------------------------------------------------------
+  */
+
+  const html = `
+<!DOCTYPE html>
+<html>
+<head>
+
+<meta charset="UTF-8">
+
+<script
+src="https://challenges.cloudflare.com/turnstile/v0/api.js"
+async
+defer>
+</script>
+
+</head>
+
+<body>
+
+<div id="cf-turnstile"></div>
+
+<script>
+
+window.onload = () => {
+
+  turnstile.render('#cf-turnstile', {
+
+    sitekey: '${siteKey}',
+
+    callback: function(token) {
+
+      let input = document.createElement('input');
+
+      input.type = 'hidden';
+
+      input.id = 'token';
+
+      input.value = token;
+
+      document.body.appendChild(input);
+    }
+  });
+};
+
+</script>
+
+</body>
+</html>
+`;
+
+  /*
+  |--------------------------------------------------------------------------
+  | INTERCEPT DOMAIN
+  |--------------------------------------------------------------------------
+  */
+
+  await page.setRequestInterception(true);
+
+  page.removeAllListeners("request");
+
+  page.on("request", async (req) => {
+
+    try {
+
+      if (
+        req.url() === domain ||
+        req.url() === domain + "/"
+      ) {
+
+        await req.respond({
+
+          status: 200,
+
+          contentType: "text/html",
+
+          body: html
+        });
+
+      } else {
+
+        await req.continue();
+      }
+
+    } catch {}
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | OPEN PAGE
+  |--------------------------------------------------------------------------
+  */
+
+  await page.goto(domain, {
+
+    waitUntil: "networkidle2",
+
+    timeout: global.timeOut
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | WAIT TOKEN
+  |--------------------------------------------------------------------------
+  */
+
+  await page.waitForSelector('#token', {
+
+    timeout: global.timeOut
+  });
+
+  /*
+  |--------------------------------------------------------------------------
+  | GET TOKEN
+  |--------------------------------------------------------------------------
+  */
+
+  const token = await page.$eval(
+    '#token',
+    el => el.value
+  );
+
+  if (!token) {
+
+    throw new Error(
+      "Failed get token"
+    );
+  }
+
+  return token;
+}
+
+/* =========================
+   API ENDPOINT
+========================= */
+
 app.post('/turnstile', async (req, res) => {
+
   const data = req.body;
 
-  if (!data) {
-    return res.status(400).json({ message: 'Invalid body' });
+  if (!data.domain || !data.siteKey) {
+
+    return res.status(400).json({
+      message: 'domain & siteKey required'
+    });
   }
 
   if (global.browserLimit <= 0) {
-    return res.status(429).json({ message: 'Too Many Requests' });
+
+    return res.status(429).json({
+      message: 'Too Many Requests'
+    });
   }
 
   global.browserLimit--;
 
-  let result, browser;
+  let browser;
 
   try {
-    const proxyServer = data.proxy
-      ? `${data.proxy.hostname}:${data.proxy.port}`
-      : null;
 
-    const ctx = await createBrowser(proxyServer);
+    const proxyServer =
+      data.proxy
+        ? `${data.proxy.hostname}:${data.proxy.port}`
+        : null;
+
+    const ctx =
+      await createBrowser(proxyServer);
+
     browser = ctx.browser;
+
     const page = ctx.page;
 
-    result = await turnstile(data, page).then(t => ({ token: t }));
+    const start = Date.now();
+
+const token =
+  await solveTurnstile(
+    data,
+    page
+  );
+
+const end = Date.now();
+
+const solveTime =
+  ((end - start) / 1000).toFixed(2);
+
+return res.json({
+  token,
+  solveTime: `${solveTime}s`
+});
 
   } catch (err) {
-    result = { code: 500, message: err.message };
+
+    return res.status(500).json({
+      message: err.message
+    });
+
   } finally {
+
     if (browser) {
-      try { await browser.close(); } catch {}
+
+      try {
+        await browser.close();
+      } catch {}
     }
+
     global.browserLimit++;
   }
-
-  res.status(result.code ?? 200).json(result);
 });
 
-/* ================== 404 ================== */
+/* =========================
+   404
+========================= */
+
 app.use((req, res) => {
-  res.status(404).json({ message: 'Not Found' });
+
+  res.status(404).json({
+    message: 'Not Found'
+  });
+
 });
 
-if (process.env.NODE_ENV === 'development') {
-  module.exports = app;
-}
+/* =========================
+   START SERVER
+========================= */
+
+app.listen(port, () => {
+
+  console.log(
+    `Server running on ${port}`
+  );
+
+});
