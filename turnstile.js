@@ -1,95 +1,70 @@
 async function turnstile({ domain, proxy, siteKey }, page) {
 
-  if (!domain) {
-    throw new Error("Missing domain parameter");
-  }
-
-  if (!siteKey) {
-    throw new Error("Missing siteKey parameter");
-  }
+  if (!domain) throw new Error("Missing domain parameter");
+  if (!siteKey) throw new Error("Missing siteKey parameter");
 
   const timeout = global.timeOut || 60000;
+  let isResolved = false;
 
-  /*
-  |--------------------------------------------------------------------------
-  | PROXY AUTH
-  |--------------------------------------------------------------------------
-  */
+  const cl = setTimeout(() => {
+    if (!isResolved) {
+      console.error("Turnstile timeout");
+    }
+  }, timeout);
 
-  if (proxy?.username && proxy?.password) {
+  try {
 
-    await page.authenticate({
-      username: proxy.username,
-      password: proxy.password,
-    });
-  }
+    if (proxy?.username && proxy?.password) {
+      await page.authenticate({
+        username: proxy.username,
+        password: proxy.password,
+      });
+    }
 
-  /*
-  |--------------------------------------------------------------------------
-  | HTML TURNSTILE
-  |--------------------------------------------------------------------------
-  */
-
-  const htmlContent = `
+    const htmlContent = `
 <!DOCTYPE html>
 <html>
-<head>
-<meta charset="UTF-8">
-<title>Turnstile Solver</title>
-<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
-</head>
-
 <body>
 
-<div id="cf-turnstile"></div>
+<div class="turnstile"></div>
+
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js?onload=onloadTurnstileCallback" defer></script>
 
 <script>
+window.onloadTurnstileCallback = function() {
 
-window.onload = () => {
-
-  turnstile.render('#cf-turnstile', {
+  turnstile.render('.turnstile', {
 
     sitekey: '${siteKey}',
 
     callback: function(token) {
 
-      let input = document.createElement('input');
+      var c = document.createElement('input');
 
-      input.type = 'hidden';
-      input.name = 'cf-response';
-      input.value = token;
+      c.type = 'hidden';
+      c.name = 'cf-response';
+      c.value = token;
 
-      document.body.appendChild(input);
+      document.body.appendChild(c);
+
     }
-  });
-};
 
+  });
+
+};
 </script>
 
 </body>
 </html>
 `;
 
-  /*
-  |--------------------------------------------------------------------------
-  | REQUEST INTERCEPTION
-  |--------------------------------------------------------------------------
-  */
+    await page.setRequestInterception(true);
 
-  await page.setRequestInterception(true);
+    page.removeAllListeners("request");
 
-  page.removeAllListeners("request");
+    page.on("request", async (request) => {
 
-  page.on("request", async (request) => {
-
-    try {
-
-      const url = request.url();
-
-      if (
-        request.resourceType() === "document" &&
-        (url === domain || url === domain + "/")
-      ) {
+      if ([domain, domain + "/"].includes(request.url()) && request.resourceType() === "document") {
 
         await request.respond({
           status: 200,
@@ -100,48 +75,41 @@ window.onload = () => {
       } else {
 
         await request.continue();
+
       }
 
-    } catch {}
-  });
+    });
 
-  /*
-  |--------------------------------------------------------------------------
-  | OPEN PAGE
-  |--------------------------------------------------------------------------
-  */
+    await page.goto(domain, { waitUntil: "domcontentloaded" });
 
-  await page.goto(domain, {
-    waitUntil: "domcontentloaded",
-    timeout
-  });
+    await page.waitForSelector('[name="cf-response"]', { timeout });
 
-  /*
-  |--------------------------------------------------------------------------
-  | WAIT TOKEN
-  |--------------------------------------------------------------------------
-  */
+    const token = await page.evaluate(() => {
 
-  await page.waitForSelector('[name="cf-response"]', {
-    timeout
-  });
+      try {
+        return document.querySelector('[name="cf-response"]').value;
+      } catch {
+        return null;
+      }
 
-  /*
-  |--------------------------------------------------------------------------
-  | GET TOKEN
-  |--------------------------------------------------------------------------
-  */
+    });
 
-  const token = await page.$eval(
-    '[name="cf-response"]',
-    el => el.value
-  );
+    isResolved = true;
 
-  if (!token || token.length < 10) {
-    throw new Error("Failed to get token");
+    clearTimeout(cl);
+
+    if (!token || token.length < 10) throw new Error("Failed to get token");
+
+    return token;
+
+  } catch (e) {
+
+    clearTimeout(cl);
+
+    throw e;
+
   }
 
-  return token;
 }
 
 module.exports = turnstile;
