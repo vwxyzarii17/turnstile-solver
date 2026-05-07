@@ -4,8 +4,6 @@ WORKDIR /app
 
 RUN apt-get update && apt-get install -y \
     chromium \
-    xvfb \
-    ca-certificates \
     fonts-liberation \
     libatk-bridge2.0-0 \
     libatk1.0-0 \
@@ -21,8 +19,13 @@ RUN apt-get update && apt-get install -y \
     libpango-1.0-0 \
     libnss3 \
     libx11-xcb1 \
-    --no-install-recommends \
-    && rm -rf /var/lib/apt/lists/*
+    libxcb1 \
+    libx11-6 \
+    libxext6 \
+    libxi6 \
+    libxtst6 \
+    ca-certificates \
+    --no-install-recommends && rm -rf /var/lib/apt/lists/*
 
 ENV CHROME_PATH=/usr/bin/chromium
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
