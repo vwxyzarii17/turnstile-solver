@@ -39,21 +39,22 @@ app.get("/", (req, res) => {
 async function createBrowser(proxyServer = null) {
 
   const connectOptions = {
+const connectOptions = {
 
-    headless: true,
+  headless: true,
 
-    turnstile: true,
+  turnstile: true,
 
-    disableXvfb: true,
+  disableXvfb: true,
 
-    executablePath: '/usr/bin/google-chrome',
+  executablePath: process.env.CHROME_PATH,
 
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-gpu'
-    ],
+  args: [
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    '--disable-dev-shm-usage'
+  ]
+};
 
     connectOption: {
       defaultViewport: null
