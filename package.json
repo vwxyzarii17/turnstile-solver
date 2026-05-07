@@ -1,13 +1,14 @@
 {
   "name": "turnstile-api",
   "version": "1.0.0",
-  "description": "Turnstile solver API",
+  "description": "Turnstile Solver API",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
     "express": "^4.19.2",
+    "puppeteer-core": "^24.0.0",
     "puppeteer-real-browser": "^1.4.0"
   }
 }
