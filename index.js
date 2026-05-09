@@ -1,21 +1,33 @@
-const express = require("express");
+process.setMaxListeners(0);
+
+const express = require('express');
 const { connect } = require("puppeteer-real-browser");
 
 const app = express();
 
-const port = process.env.PORT || 8080;
-const authToken = process.env.authToken || null;
-const domain = process.env.DOMAIN || `http://localhost:${port}`;
-
-global.browserLimit = Number(process.env.browserLimit) || 3;
-global.activeBrowser = 0;
-global.timeOut = Number(process.env.timeOut) || 60000;
+const port = process.env.PORT || 7860;
 
 /* =========================
-   EXPRESS
+   CONFIG
 ========================= */
 
-app.use(express.json({ limit: "50mb" }));
+global.browserLimit = 1;
+global.timeOut = 120000;
+
+/* =========================
+   BROWSER POOL
+========================= */
+
+global.browserPool = [];
+
+/* =========================
+   BODY PARSER
+========================= */
+
+app.use(express.json({
+  limit: "50mb"
+}));
+
 app.use(express.urlencoded({
   extended: true,
   limit: "50mb"
@@ -28,206 +40,240 @@ app.use(express.urlencoded({
 app.get("/", (req, res) => {
 
   res.json({
-    message: "Server is running!",
-    domain,
-    endpoints: {
-      turnstile: `${domain}/turnstile`,
-      health: `${domain}/health`
-    },
-    status: {
-      browserLimit: global.browserLimit,
-      activeBrowser: global.activeBrowser,
-      timeout: global.timeOut,
-      authRequired: authToken !== null
-    }
+    status: true,
+    message: "Turnstile Solver API Running"
   });
 
 });
 
 /* =========================
-   HEALTHCHECK
-========================= */
-
-app.get("/health", (_, res) => {
-  res.send("OK");
-});
-
-/* =========================
-   AUTH MIDDLEWARE
-========================= */
-
-app.use((req, res, next) => {
-
-  if (!authToken) {
-    return next();
-  }
-
-  const token =
-    req.headers.authorization ||
-    req.headers["x-api-key"];
-
-  if (!token || token !== authToken) {
-
-    return res.status(401).json({
-      message: "Unauthorized"
-    });
-
-  }
-
-  next();
-
-});
-
-/* =========================
-   BROWSER
+   CREATE BROWSER
 ========================= */
 
 async function createBrowser(proxyServer = null) {
 
-  const args = [
-    "--no-sandbox",
-    "--disable-setuid-sandbox",
-    "--disable-dev-shm-usage",
-    "--disable-gpu",
-    "--no-first-run",
-    "--no-zygote",
-    "--single-process"
-  ];
-
-  if (proxyServer) {
-    args.push(`--proxy-server=${proxyServer}`);
-  }
-
   const connectOptions = {
-    headless: true,
+
+    headless: false,
+
     turnstile: true,
+
     disableXvfb: false,
-    args,
+
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu'
+    ],
 
     connectOption: {
-      defaultViewport: null,
-      timeout: global.timeOut
+      defaultViewport: null
     }
   };
 
-  const { browser } = await connect(connectOptions);
+  if (proxyServer) {
 
-  const [page] = await browser.pages();
+    connectOptions.args.push(
+      `--proxy-server=${proxyServer}`
+    );
+  }
 
-  await page.goto("about:blank");
+  const { browser } =
+    await connect(connectOptions);
 
-  await page.setRequestInterception(true);
+  browser.on('disconnected', () => {
 
-  page.on("request", async (req) => {
+    global.browserPool =
+      global.browserPool.filter(
+        b => b !== browser
+      );
 
-    try {
-
-      const type = req.resourceType();
-
-      if (
-        ["image", "stylesheet", "font", "media"]
-          .includes(type)
-      ) {
-
-        await req.abort();
-
-      } else {
-
-        await req.continue();
-
-      }
-
-    } catch {}
-
+    console.log(
+      'Browser disconnected'
+    );
   });
 
-  return {
-    browser,
-    page
-  };
-
+  return browser;
 }
 
 /* =========================
-   TURNSTILE SOLVER
+   GET BROWSER FROM POOL
 ========================= */
 
-async function turnstile({
-  domain,
-  proxy,
-  siteKey
-}, page) {
+async function getBrowser(proxyServer = null) {
+
+  while (global.browserPool.length > 0) {
+
+    const browser =
+      global.browserPool.pop();
+
+    try {
+
+      if (
+        browser &&
+        browser.connected
+      ) {
+
+        await browser.version();
+
+        return browser;
+      }
+
+    } catch {
+
+      try {
+        await browser.close();
+      } catch {}
+    }
+  }
+
+  return await createBrowser(proxyServer);
+}
+
+/* =========================
+   RELEASE BROWSER
+========================= */
+
+async function releaseBrowser(browser) {
+
+  try {
+
+    if (
+      !browser ||
+      !browser.connected
+    ) {
+
+      try {
+        await browser.close();
+      } catch {}
+
+      return;
+    }
+
+    const pages =
+      await browser.pages();
+
+    for (const page of pages) {
+
+      try {
+
+        await page.goto(
+          'about:blank'
+        );
+
+        page.removeAllListeners();
+
+      } catch {}
+    }
+
+    global.browserPool.push(browser);
+
+  } catch {
+
+    try {
+      await browser.close();
+    } catch {}
+  }
+}
+
+/* =========================
+   INIT POOL
+========================= */
+
+async function initBrowserPool() {
+
+  for (
+    let i = 0;
+    i < global.browserLimit;
+    i++
+  ) {
+
+    try {
+
+      const browser =
+        await createBrowser();
+
+      global.browserPool.push(
+        browser
+      );
+
+      console.log(
+        `Browser pool ${i + 1} ready`
+      );
+
+    } catch (err) {
+
+      console.log(
+        `Pool error: ${err.message}`
+      );
+    }
+  }
+}
+
+/* =========================
+   SOLVE TURNSTILE
+========================= */
+
+async function solveTurnstile(
+  { domain, siteKey },
+  page
+) {
 
   if (!domain) {
-    throw new Error("Missing domain parameter");
+    throw new Error("Missing domain");
   }
 
   if (!siteKey) {
-    throw new Error("Missing siteKey parameter");
+    throw new Error("Missing siteKey");
   }
 
-  const timeout = global.timeOut || 60000;
+  /*
+  |--------------------------------------------------------------------------
+  | CUSTOM TURNSTILE HTML
+  |--------------------------------------------------------------------------
+  */
 
-  if (
-    proxy?.username &&
-    proxy?.password
-  ) {
-
-    await page.authenticate({
-      username: proxy.username,
-      password: proxy.password
-    });
-
-  }
-
-  const htmlContent = `
+  const html = `
 <!DOCTYPE html>
 <html>
 <head>
+
 <meta charset="UTF-8">
-<title>Turnstile Solver</title>
+
+<script
+src="https://challenges.cloudflare.com/turnstile/v0/api.js"
+async
+defer>
+</script>
+
 </head>
 
 <body>
 
-<div id="turnstile-container"></div>
-
-<script
-src="https://challenges.cloudflare.com/turnstile/v0/api.js?onload=onloadTurnstileCallback"
-defer>
-</script>
+<div id="cf-turnstile"></div>
 
 <script>
 
-window.onloadTurnstileCallback = function () {
+window.onload = () => {
 
-  turnstile.render('#turnstile-container', {
+  turnstile.render('#cf-turnstile', {
 
     sitekey: '${siteKey}',
 
     callback: function(token) {
 
-      let input = document.querySelector(
-        '[name="cf-response"]'
-      );
+      let input = document.createElement('input');
 
-      if (!input) {
+      input.type = 'hidden';
 
-        input = document.createElement('input');
-
-        input.type = 'hidden';
-        input.name = 'cf-response';
-
-        document.body.appendChild(input);
-
-      }
+      input.id = 'token';
 
       input.value = token;
 
+      document.body.appendChild(input);
     }
-
   });
-
 };
 
 </script>
@@ -236,154 +282,175 @@ window.onloadTurnstileCallback = function () {
 </html>
 `;
 
-  const requestHandler = async (request) => {
+  /*
+  |--------------------------------------------------------------------------
+  | INTERCEPT DOMAIN
+  |--------------------------------------------------------------------------
+  */
+
+  await page.setRequestInterception(true);
+
+  page.removeAllListeners("request");
+
+  page.on("request", async (req) => {
 
     try {
 
-      const url = request.url();
-
       if (
-        request.resourceType() === "document" &&
-        (url === domain || url === domain + "/")
+        req.url() === domain ||
+        req.url() === domain + "/"
       ) {
 
-        await request.respond({
+        await req.respond({
+
           status: 200,
+
           contentType: "text/html",
-          body: htmlContent
+
+          body: html
         });
 
       } else {
 
-        await request.continue();
-
+        await req.continue();
       }
 
     } catch {}
+  });
 
-  };
+  /*
+  |--------------------------------------------------------------------------
+  | OPEN PAGE
+  |--------------------------------------------------------------------------
+  */
 
-  page.on("request", requestHandler);
+  await page.goto(domain, {
 
-  try {
+    waitUntil: "networkidle2",
 
-    await page.goto(domain, {
-      waitUntil: "domcontentloaded",
-      timeout
-    });
+    timeout: global.timeOut
+  });
 
-    await Promise.race([
+  /*
+  |--------------------------------------------------------------------------
+  | WAIT TOKEN
+  |--------------------------------------------------------------------------
+  */
 
-      page.waitForSelector(
-        '[name="cf-response"]',
-        { timeout }
-      ),
+  await page.waitForSelector('#token', {
 
-      new Promise((_, reject) =>
-        setTimeout(() => {
-          reject(
-            new Error("Turnstile timeout")
-          );
-        }, timeout)
-      )
+    timeout: global.timeOut
+  });
 
-    ]);
+  /*
+  |--------------------------------------------------------------------------
+  | GET TOKEN
+  |--------------------------------------------------------------------------
+  */
 
-    const token = await page.$eval(
-      '[name="cf-response"]',
-      el => el.value
+  const token = await page.$eval(
+    '#token',
+    el => el.value
+  );
+
+  if (!token) {
+
+    throw new Error(
+      "Failed get token"
     );
-
-    if (!token || token.length < 10) {
-      throw new Error(
-        "Failed to get token"
-      );
-    }
-
-    return token;
-
-  } finally {
-
-    page.off("request", requestHandler);
-
   }
 
+  return token;
 }
 
 /* =========================
-   API
+   API ENDPOINT
 ========================= */
 
-app.post("/turnstile", async (req, res) => {
+app.post('/turnstile', async (req, res) => {
 
   const data = req.body;
 
-  if (!data) {
+  if (!data.domain || !data.siteKey) {
 
     return res.status(400).json({
-      message: "Invalid body"
+      message: 'domain & siteKey required'
     });
-
   }
 
-  if (
-    global.activeBrowser >=
-    global.browserLimit
-  ) {
+  if (global.browserLimit <= 0) {
 
     return res.status(429).json({
-      message: "Too Many Requests"
+      message: 'Too Many Requests'
     });
-
   }
 
-  global.activeBrowser++;
+  global.browserLimit--;
 
   let browser;
+  let page;
 
   try {
 
-    const proxyServer = data.proxy
-      ? `${data.proxy.hostname}:${data.proxy.port}`
-      : null;
+    const proxyServer =
+      data.proxy
+        ? `${data.proxy.hostname}:${data.proxy.port}`
+        : null;
 
-    const ctx = await createBrowser(
-      proxyServer
-    );
+    browser =
+      await getBrowser(proxyServer);
 
-    browser = ctx.browser;
+    page =
+      await browser.newPage();
 
-    const token = await turnstile(
-      data,
-      ctx.page
-    );
+    const start = Date.now();
+
+    const token =
+      await solveTurnstile(
+        data,
+        page
+      );
+
+    const end = Date.now();
+
+    const solveTime =
+      ((end - start) / 1000).toFixed(2);
 
     return res.json({
-      success: true,
-      token
+      token,
+      solveTime: `${solveTime}s`
     });
 
   } catch (err) {
 
     return res.status(500).json({
-      success: false,
       message: err.message
     });
 
   } finally {
 
-    global.activeBrowser--;
+    try {
+
+      if (page) {
+
+        try {
+
+          await page.setRequestInterception(false);
+
+        } catch {}
+
+        await page.close();
+      }
+
+    } catch {}
 
     if (browser) {
 
-      try {
-        await browser.close();
-      } catch {}
-
+      await releaseBrowser(browser);
     }
 
+    global.browserLimit++;
   }
-
 });
 
 /* =========================
@@ -393,31 +460,25 @@ app.post("/turnstile", async (req, res) => {
 app.use((req, res) => {
 
   res.status(404).json({
-    message: "Not Found"
+    message: 'Not Found'
   });
 
 });
 
 /* =========================
-   START
+   START SERVER
 ========================= */
 
-app.listen(port, () => {
+(async () => {
 
-  console.log(
-    `Server running on port ${port}`
-  );
+  await initBrowserPool();
 
-  console.log(
-    `Domain: ${domain}`
-  );
+  app.listen(port, () => {
 
-  console.log(
-    `Browser limit: ${global.browserLimit}`
-  );
+    console.log(
+      `Server running on ${port}`
+    );
 
-  console.log(
-    `Timeout: ${global.timeOut}`
-  );
+  });
 
-});
+})();
