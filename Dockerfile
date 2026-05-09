@@ -3,8 +3,8 @@ FROM node:20-bullseye
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y \
-    chromium \
     xvfb \
+    chromium \
     fonts-liberation \
     libatk-bridge2.0-0 \
     libatk1.0-0 \
@@ -26,18 +26,17 @@ RUN apt-get update && apt-get install -y \
     libxi6 \
     libxtst6 \
     ca-certificates \
-    --no-install-recommends && \
-    rm -rf /var/lib/apt/lists/*
+    --no-install-recommends && rm -rf /var/lib/apt/lists/*
 
+ENV CHROME_PATH=/usr/bin/chromium
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
 COPY package*.json ./
 
-RUN npm install
+RUN npm install --omit=dev
 
 COPY . .
 
-EXPOSE 8080
+EXPOSE 7860
 
 CMD ["node", "index.js"]
