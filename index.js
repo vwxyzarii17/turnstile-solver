@@ -11,7 +11,6 @@ const port = process.env.PORT || 7860;
    CONFIG
 ========================= */
 
-global.browserLimit = 1;
 global.timeOut = 120000;
 
 /* =========================
@@ -61,10 +60,30 @@ async function createBrowser(proxyServer = null) {
     disableXvfb: false,
 
     args: [
+
       '--no-sandbox',
+
       '--disable-setuid-sandbox',
+
       '--disable-dev-shm-usage',
-      '--disable-gpu'
+
+      '--window-size=1920,1080',
+
+      '--start-maximized',
+
+      '--disable-blink-features=AutomationControlled',
+
+      '--disable-features=IsolateOrigins,site-per-process',
+
+      '--no-first-run',
+
+      '--no-default-browser-check',
+
+      '--disable-backgrounding-occluded-windows',
+
+      '--disable-renderer-backgrounding',
+
+      '--disable-background-timer-throttling'
     ],
 
     connectOption: {
@@ -112,7 +131,7 @@ async function getBrowser(proxyServer = null) {
 
       if (
         browser &&
-        browser.connected
+        browser.isConnected()
       ) {
 
         await browser.version();
@@ -141,7 +160,7 @@ async function releaseBrowser(browser) {
 
     if (
       !browser ||
-      !browser.connected
+      !browser.isConnected()
     ) {
 
       try {
@@ -149,22 +168,6 @@ async function releaseBrowser(browser) {
       } catch {}
 
       return;
-    }
-
-    const pages =
-      await browser.pages();
-
-    for (const page of pages) {
-
-      try {
-
-        await page.goto(
-          'about:blank'
-        );
-
-        page.removeAllListeners();
-
-      } catch {}
     }
 
     global.browserPool.push(browser);
@@ -183,32 +186,65 @@ async function releaseBrowser(browser) {
 
 async function initBrowserPool() {
 
-  for (
-    let i = 0;
-    i < global.browserLimit;
-    i++
-  ) {
+  try {
 
-    try {
+    const browser =
+      await createBrowser();
 
-      const browser =
-        await createBrowser();
+    global.browserPool.push(
+      browser
+    );
 
-      global.browserPool.push(
-        browser
-      );
+    console.log(
+      'Browser pool ready'
+    );
 
-      console.log(
-        `Browser pool ${i + 1} ready`
-      );
+  } catch (err) {
 
-    } catch (err) {
-
-      console.log(
-        `Pool error: ${err.message}`
-      );
-    }
+    console.log(
+      `Pool error: ${err.message}`
+    );
   }
+}
+
+/* =========================
+   PREPARE PAGE
+========================= */
+
+async function preparePage(page) {
+
+  await page.setViewport({
+    width: 1920,
+    height: 1080
+  });
+
+  await page.setUserAgent(
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36'
+  );
+
+  await page.setExtraHTTPHeaders({
+    'accept-language': 'en-US,en;q=0.9'
+  });
+
+  await page.evaluateOnNewDocument(() => {
+
+    Object.defineProperty(navigator, 'webdriver', {
+      get: () => false
+    });
+
+    Object.defineProperty(navigator, 'languages', {
+      get: () => ['en-US', 'en']
+    });
+
+    Object.defineProperty(navigator, 'platform', {
+      get: () => 'Win32'
+    });
+
+    Object.defineProperty(navigator, 'hardwareConcurrency', {
+      get: () => 8
+    });
+
+  });
 }
 
 /* =========================
@@ -296,6 +332,10 @@ window.onload = () => {
 
     try {
 
+      if (req.isInterceptResolutionHandled()) {
+        return;
+      }
+
       if (
         req.url() === domain ||
         req.url() === domain + "/"
@@ -378,15 +418,6 @@ app.post('/turnstile', async (req, res) => {
     });
   }
 
-  if (global.browserLimit <= 0) {
-
-    return res.status(429).json({
-      message: 'Too Many Requests'
-    });
-  }
-
-  global.browserLimit--;
-
   let browser;
   let page;
 
@@ -402,6 +433,8 @@ app.post('/turnstile', async (req, res) => {
 
     page =
       await browser.newPage();
+
+    await preparePage(page);
 
     const start = Date.now();
 
@@ -439,7 +472,11 @@ app.post('/turnstile', async (req, res) => {
 
         } catch {}
 
-        await page.close();
+        page.removeAllListeners();
+
+        if (!page.isClosed()) {
+          await page.close();
+        }
       }
 
     } catch {}
@@ -448,8 +485,6 @@ app.post('/turnstile', async (req, res) => {
 
       await releaseBrowser(browser);
     }
-
-    global.browserLimit++;
   }
 });
 
@@ -482,3 +517,4 @@ app.use((req, res) => {
   });
 
 })();
+         
