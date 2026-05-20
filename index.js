@@ -20,6 +20,12 @@ global.timeOut = 120000;
 global.browserPool = [];
 
 /* =========================
+   PAGE POOL
+========================= */
+
+global.pagePool = [];
+
+/* =========================
    BODY PARSER
 ========================= */
 
@@ -106,6 +112,11 @@ async function createBrowser(proxyServer = null) {
     global.browserPool =
       global.browserPool.filter(
         b => b !== browser
+      );
+
+    global.pagePool =
+      global.pagePool.filter(
+        p => p.browser !== browser
       );
 
     console.log(
@@ -245,6 +256,101 @@ async function preparePage(page) {
     });
 
   });
+}
+
+/* =========================
+   GET PAGE FROM POOL
+========================= */
+
+async function getPage(browser) {
+
+  while (global.pagePool.length > 0) {
+
+    const item =
+      global.pagePool.pop();
+
+    try {
+
+      if (
+        item &&
+        item.browser === browser &&
+        !item.busy &&
+        !item.page.isClosed()
+      ) {
+
+        item.busy = true;
+
+        return item;
+      }
+
+    } catch {}
+  }
+
+  const page =
+    await browser.newPage();
+
+  await preparePage(page);
+
+  return {
+    browser,
+    page,
+    busy: true
+  };
+}
+
+/* =========================
+   RELEASE PAGE
+========================= */
+
+async function releasePage(item) {
+
+  try {
+
+    if (
+      !item ||
+      !item.page ||
+      item.page.isClosed()
+    ) {
+      return;
+    }
+
+    try {
+
+      await item.page.setRequestInterception(false);
+
+    } catch {}
+
+    item.page.removeAllListeners();
+
+    /*
+    |--------------------------------------------------------------------------
+    | PAGE TETAP HIDUP
+    |--------------------------------------------------------------------------
+    */
+
+    try {
+
+      await item.page.goto(
+        'about:blank',
+        {
+          waitUntil: 'domcontentloaded',
+          timeout: 10000
+        }
+      );
+
+    } catch {}
+
+    /*
+    |--------------------------------------------------------------------------
+    | COOKIE TIDAK DIHAPUS
+    |--------------------------------------------------------------------------
+    */
+
+    item.busy = false;
+
+    global.pagePool.push(item);
+
+  } catch {}
 }
 
 /* =========================
@@ -419,7 +525,7 @@ app.post('/turnstile', async (req, res) => {
   }
 
   let browser;
-  let page;
+  let item;
 
   try {
 
@@ -431,17 +537,15 @@ app.post('/turnstile', async (req, res) => {
     browser =
       await getBrowser(proxyServer);
 
-    page =
-      await browser.newPage();
-
-    await preparePage(page);
+    item =
+      await getPage(browser);
 
     const start = Date.now();
 
     const token =
       await solveTurnstile(
         data,
-        page
+        item.page
       );
 
     const end = Date.now();
@@ -462,24 +566,10 @@ app.post('/turnstile', async (req, res) => {
 
   } finally {
 
-    try {
+    if (item) {
 
-      if (page) {
-
-        try {
-
-          await page.setRequestInterception(false);
-
-        } catch {}
-
-        page.removeAllListeners();
-
-        if (!page.isClosed()) {
-          await page.close();
-        }
-      }
-
-    } catch {}
+      await releasePage(item);
+    }
 
     if (browser) {
 
@@ -517,4 +607,4 @@ app.use((req, res) => {
   });
 
 })();
-         
+       
