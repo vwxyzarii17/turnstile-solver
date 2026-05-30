@@ -58,12 +58,9 @@ app.get("/", (req, res) => {
 async function createBrowser(proxyServer = null) {
 
   const connectOptions = {
-
-    headless: false,
-
-    turnstile: true,
-
-    disableXvfb: false,
+  headless: "new",
+  turnstile: true,
+  disableXvfb: true,
 
     args: [
 
