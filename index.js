@@ -1,149 +1,136 @@
-const express = require('express');
-const { connect } = require('puppeteer-real-browser');
+const express = require("express");
+const { connect } = require("puppeteer-real-browser");
+
+const turnstile = require("./turnstile");
 
 const app = express();
 
-const port = process.env.PORT || 7860;
+const PORT = process.env.PORT || 7860;
 
-global.timeOut = Number(process.env.timeOut) || 60000;
-
-/* ================= SINGLE BROWSER ================= */
+global.timeOut = 60000;
 
 let browser;
 let browserReady = false;
 
-/* ================= INIT ================= */
+process.on("uncaughtException", console.error);
+process.on("unhandledRejection", console.error);
 
 async function initBrowser() {
 
-  console.log('Starting browser...');
+    console.log("Starting browser...");
 
-  const { browser: br } = await connect({
-    headless: false,
-    turnstile: true,
-    connectOption: {
-      defaultViewport: null
-    },
-    disableXvfb: false,
-  });
+    const { browser: br } = await connect({
+        headless: false,
+        turnstile: true,
+        disableXvfb: false,
+        args: [
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-gpu"
+        ],
+        connectOption: {
+            defaultViewport: null
+        }
+    });
 
-  browser = br;
+    browser = br;
 
-  browserReady = true;
+    browser.on("disconnected", () => {
+        console.log("BROWSER DISCONNECTED");
+        browserReady = false;
+    });
 
-  console.log('Browser ready');
+    browserReady = true;
 
+    console.log("Browser ready");
 }
-
-/* ================= CREATE PAGE ================= */
 
 async function createPage() {
 
-  const page = await browser.newPage();
+    const page = await browser.newPage();
 
-  await page.setRequestInterception(true);
+    await page.setRequestInterception(true);
 
-  page.on('request', (req) => {
+    page.on("request", (req) => {
 
-    const type = req.resourceType();
+        const type = req.resourceType();
 
-    if (
-      type === 'image' ||
-      type === 'stylesheet' ||
-      type === 'font' ||
-      type === 'media'
-    ) {
+        if (
+            type === "image" ||
+            type === "font" ||
+            type === "stylesheet" ||
+            type === "media"
+        ) {
+            req.abort();
+        } else {
+            req.continue();
+        }
+    });
 
-      req.abort();
-
-    } else {
-
-      req.continue();
-
-    }
-
-  });
-
-  return page;
-
+    return page;
 }
 
-/* ================= IMPORT ================= */
-
-const turnstile = require('./turnstile');
-
-/* ================= API ================= */
-
 app.use(express.json({
-  limit: '50mb'
+    limit: "50mb"
 }));
 
-app.post('/turnstile', async (req, res) => {
-
-  if (!browserReady) {
-
-    return res.status(503).json({
-      success: false,
-      message: 'Browser not ready'
-    });
-
-  }
-
-  let page;
-
-  try {
-
-    page = await createPage();
-
-    const result = await Promise.race([
-
-      turnstile(req.body, page),
-
-      new Promise((_, reject) => {
-
-        setTimeout(() => {
-          reject(new Error('Solve timeout'));
-        }, global.timeOut);
-
-      })
-
-    ]);
-
-    try {
-      await page.close();
-    } catch {}
-
-    return res.json(result);
-
-  } catch (err) {
-
-    if (page) {
-
-      try {
-        await page.close();
-      } catch {}
-
-    }
-
-    return res.status(500).json({
-      success: false,
-      message: err.message
-    });
-
-  }
-
+app.get("/", (req, res) => {
+    res.send("Turnstile API Running");
 });
 
-/* ================= START ================= */
+app.post("/turnstile", async (req, res) => {
+
+    if (!browserReady) {
+        return res.status(503).json({
+            success: false,
+            message: "Browser not ready"
+        });
+    }
+
+    let page;
+
+    try {
+
+        page = await createPage();
+
+        const result = await Promise.race([
+
+            turnstile(req.body, page),
+
+            new Promise((_, reject) => {
+                setTimeout(() => {
+                    reject(new Error("Solve timeout"));
+                }, global.timeOut);
+            })
+
+        ]);
+
+        await page.close();
+
+        res.json(result);
+
+    } catch (e) {
+
+        if (page) {
+            try {
+                await page.close();
+            } catch {}
+        }
+
+        res.status(500).json({
+            success: false,
+            message: e.message
+        });
+    }
+});
 
 (async () => {
 
-  await initBrowser();
+    await initBrowser();
 
-  app.listen(port, () => {
-
-    console.log(`Server running on ${port}`);
-
-  });
+    app.listen(PORT, () => {
+        console.log("Server running on " + PORT);
+    });
 
 })();
