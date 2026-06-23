@@ -1,4 +1,4 @@
-FROM node:20-slim
+FROM node:20-bullseye
 
 WORKDIR /app
 
@@ -26,12 +26,10 @@ RUN apt-get update && apt-get install -y \
     libxi6 \
     libxtst6 \
     ca-certificates \
-    --no-install-recommends \
-    && rm -rf /var/lib/apt/lists/*
+    --no-install-recommends && rm -rf /var/lib/apt/lists/*
 
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+ENV CHROME_PATH=/usr/bin/chromium
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
-ENV NODE_OPTIONS=--max-old-space-size=512
 
 COPY package*.json ./
 
