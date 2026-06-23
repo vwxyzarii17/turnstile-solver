@@ -1,5 +1,5 @@
-const express = require("express");
-const { connect } = require("puppeteer-real-browser");
+const express = require('express');
+const { connect } = require('puppeteer-real-browser');
 
 const app = express();
 
@@ -7,79 +7,31 @@ const port = process.env.PORT || 7860;
 
 global.timeOut = Number(process.env.timeOut) || 60000;
 
-let browser = null;
+/* ================= SINGLE BROWSER ================= */
+
+let browser;
 let browserReady = false;
 
-/* ================= ERROR HANDLER ================= */
-
-process.on("uncaughtException", (err) => {
-    console.error("Uncaught Exception:", err);
-});
-
-process.on("unhandledRejection", (err) => {
-    console.error("Unhandled Rejection:", err);
-});
-
-/* ================= INIT BROWSER ================= */
+/* ================= INIT ================= */
 
 async function initBrowser() {
 
-    console.log("Starting browser...");
+  console.log('Starting browser...');
 
-    const { browser: br } = await connect({
-        headless: false,
-        turnstile: true,
-        disableXvfb: false,
-        args: [
-            "--no-sandbox",
-            "--disable-setuid-sandbox",
-            "--disable-dev-shm-usage",
-            "--disable-gpu"
-        ],
-        connectOption: {
-            defaultViewport: null
-        }
-    });
+  const { browser: br } = await connect({
+    headless: false,
+    turnstile: true,
+    connectOption: {
+      defaultViewport: null
+    },
+    disableXvfb: false,
+  });
 
-    browser = br;
+  browser = br;
 
-    browserReady = true;
+  browserReady = true;
 
-    browser.on("disconnected", () => {
-        console.log("Browser disconnected");
-
-        browserReady = false;
-        browser = null;
-    });
-
-    console.log("Browser ready");
-}
-
-/* ================= START BROWSER ================= */
-
-async function startBrowser() {
-
-    while (true) {
-
-        try {
-
-            browserReady = false;
-
-            await initBrowser();
-
-            break;
-
-        } catch (err) {
-
-            console.log("Browser start failed:", err.message);
-
-            await new Promise(resolve => {
-                setTimeout(resolve, 5000);
-            });
-
-        }
-
-    }
+  console.log('Browser ready');
 
 }
 
@@ -87,127 +39,111 @@ async function startBrowser() {
 
 async function createPage() {
 
-    if (!browser || !browser.isConnected()) {
-        throw new Error("Browser unavailable");
+  const page = await browser.newPage();
+
+  await page.setRequestInterception(true);
+
+  page.on('request', (req) => {
+
+    const type = req.resourceType();
+
+    if (
+      type === 'image' ||
+      type === 'stylesheet' ||
+      type === 'font' ||
+      type === 'media'
+    ) {
+
+      req.abort();
+
+    } else {
+
+      req.continue();
+
     }
 
-    return await browser.newPage();
+  });
+
+  return page;
 
 }
 
 /* ================= IMPORT ================= */
 
-const turnstile = require("./turnstile");
+const turnstile = require('./turnstile');
 
-/* ================= EXPRESS ================= */
+/* ================= API ================= */
 
 app.use(express.json({
-    limit: "50mb"
+  limit: '50mb'
 }));
 
-/* ================= HEALTH ================= */
+app.post('/turnstile', async (req, res) => {
 
-app.get("/", (req, res) => {
+  if (!browserReady) {
 
-    res.json({
-        status: "running",
-        browser: browserReady
+    return res.status(503).json({
+      success: false,
+      message: 'Browser not ready'
     });
 
-});
+  }
 
-/* ================= TURNSTILE API ================= */
+  let page;
 
-app.post("/turnstile", async (req, res) => {
+  try {
 
-    if (!browserReady) {
+    page = await createPage();
 
-        return res.status(503).json({
-            success: false,
-            message: "Browser not ready"
-        });
+    const result = await Promise.race([
 
-    }
+      turnstile(req.body, page),
 
-    let page;
+      new Promise((_, reject) => {
+
+        setTimeout(() => {
+          reject(new Error('Solve timeout'));
+        }, global.timeOut);
+
+      })
+
+    ]);
 
     try {
+      await page.close();
+    } catch {}
 
-        page = await createPage();
+    return res.json(result);
 
-        const result = await Promise.race([
+  } catch (err) {
 
-            turnstile(req.body, page),
+    if (page) {
 
-            new Promise((_, reject) => {
-
-                setTimeout(() => {
-                    reject(new Error("Solve timeout"));
-                }, global.timeOut);
-
-            })
-
-        ]);
-
-        try {
-            await page.close();
-        } catch {}
-
-        return res.json(result);
-
-    } catch (err) {
-
-        console.error(err);
-
-        if (page) {
-
-            try {
-                await page.close();
-            } catch {}
-
-        }
-
-        return res.status(500).json({
-            success: false,
-            message: err.message
-        });
+      try {
+        await page.close();
+      } catch {}
 
     }
+
+    return res.status(500).json({
+      success: false,
+      message: err.message
+    });
+
+  }
 
 });
 
-/* ================= WATCHDOG ================= */
-
-setInterval(async () => {
-
-    try {
-
-        if (!browser || !browser.isConnected()) {
-
-            console.log("Browser dead. Restarting...");
-
-            await startBrowser();
-
-        }
-
-    } catch (err) {
-
-        console.log("Watchdog error:", err.message);
-
-    }
-
-}, 10000);
-
-/* ================= START SERVER ================= */
+/* ================= START ================= */
 
 (async () => {
 
-    await startBrowser();
+  await initBrowser();
 
-    app.listen(port, () => {
+  app.listen(port, () => {
 
-        console.log(`Server running on ${port}`);
+    console.log(`Server running on ${port}`);
 
-    });
+  });
 
 })();
