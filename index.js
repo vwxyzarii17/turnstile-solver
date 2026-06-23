@@ -1,5 +1,5 @@
-const express = require('express');
-const { connect } = require('puppeteer-real-browser');
+const express = require("express");
+const { connect } = require("puppeteer-real-browser");
 
 const app = express();
 
@@ -7,31 +7,79 @@ const port = process.env.PORT || 7860;
 
 global.timeOut = Number(process.env.timeOut) || 60000;
 
-/* ================= SINGLE BROWSER ================= */
-
-let browser;
+let browser = null;
 let browserReady = false;
 
-/* ================= INIT ================= */
+/* ================= ERROR HANDLER ================= */
+
+process.on("uncaughtException", (err) => {
+    console.error("Uncaught Exception:", err);
+});
+
+process.on("unhandledRejection", (err) => {
+    console.error("Unhandled Rejection:", err);
+});
+
+/* ================= INIT BROWSER ================= */
 
 async function initBrowser() {
 
-  console.log('Starting browser...');
+    console.log("Starting browser...");
 
-  const { browser: br } = await connect({
-    headless: false,
-    turnstile: true,
-    connectOption: {
-      defaultViewport: null
-    },
-    disableXvfb: false,
-  });
+    const { browser: br } = await connect({
+        headless: false,
+        turnstile: true,
+        disableXvfb: false,
+        args: [
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-gpu"
+        ],
+        connectOption: {
+            defaultViewport: null
+        }
+    });
 
-  browser = br;
+    browser = br;
 
-  browserReady = true;
+    browserReady = true;
 
-  console.log('Browser ready');
+    browser.on("disconnected", () => {
+        console.log("Browser disconnected");
+
+        browserReady = false;
+        browser = null;
+    });
+
+    console.log("Browser ready");
+}
+
+/* ================= START BROWSER ================= */
+
+async function startBrowser() {
+
+    while (true) {
+
+        try {
+
+            browserReady = false;
+
+            await initBrowser();
+
+            break;
+
+        } catch (err) {
+
+            console.log("Browser start failed:", err.message);
+
+            await new Promise(resolve => {
+                setTimeout(resolve, 5000);
+            });
+
+        }
+
+    }
 
 }
 
@@ -39,111 +87,127 @@ async function initBrowser() {
 
 async function createPage() {
 
-  const page = await browser.newPage();
-
-  await page.setRequestInterception(true);
-
-  page.on('request', (req) => {
-
-    const type = req.resourceType();
-
-    if (
-      type === 'image' ||
-      type === 'stylesheet' ||
-      type === 'font' ||
-      type === 'media'
-    ) {
-
-      req.abort();
-
-    } else {
-
-      req.continue();
-
+    if (!browser || !browser.isConnected()) {
+        throw new Error("Browser unavailable");
     }
 
-  });
-
-  return page;
+    return await browser.newPage();
 
 }
 
 /* ================= IMPORT ================= */
 
-const turnstile = require('./turnstile');
+const turnstile = require("./turnstile");
 
-/* ================= API ================= */
+/* ================= EXPRESS ================= */
 
 app.use(express.json({
-  limit: '50mb'
+    limit: "50mb"
 }));
 
-app.post('/turnstile', async (req, res) => {
+/* ================= HEALTH ================= */
 
-  if (!browserReady) {
+app.get("/", (req, res) => {
 
-    return res.status(503).json({
-      success: false,
-      message: 'Browser not ready'
+    res.json({
+        status: "running",
+        browser: browserReady
     });
-
-  }
-
-  let page;
-
-  try {
-
-    page = await createPage();
-
-    const result = await Promise.race([
-
-      turnstile(req.body, page),
-
-      new Promise((_, reject) => {
-
-        setTimeout(() => {
-          reject(new Error('Solve timeout'));
-        }, global.timeOut);
-
-      })
-
-    ]);
-
-    try {
-      await page.close();
-    } catch {}
-
-    return res.json(result);
-
-  } catch (err) {
-
-    if (page) {
-
-      try {
-        await page.close();
-      } catch {}
-
-    }
-
-    return res.status(500).json({
-      success: false,
-      message: err.message
-    });
-
-  }
 
 });
 
-/* ================= START ================= */
+/* ================= TURNSTILE API ================= */
+
+app.post("/turnstile", async (req, res) => {
+
+    if (!browserReady) {
+
+        return res.status(503).json({
+            success: false,
+            message: "Browser not ready"
+        });
+
+    }
+
+    let page;
+
+    try {
+
+        page = await createPage();
+
+        const result = await Promise.race([
+
+            turnstile(req.body, page),
+
+            new Promise((_, reject) => {
+
+                setTimeout(() => {
+                    reject(new Error("Solve timeout"));
+                }, global.timeOut);
+
+            })
+
+        ]);
+
+        try {
+            await page.close();
+        } catch {}
+
+        return res.json(result);
+
+    } catch (err) {
+
+        console.error(err);
+
+        if (page) {
+
+            try {
+                await page.close();
+            } catch {}
+
+        }
+
+        return res.status(500).json({
+            success: false,
+            message: err.message
+        });
+
+    }
+
+});
+
+/* ================= WATCHDOG ================= */
+
+setInterval(async () => {
+
+    try {
+
+        if (!browser || !browser.isConnected()) {
+
+            console.log("Browser dead. Restarting...");
+
+            await startBrowser();
+
+        }
+
+    } catch (err) {
+
+        console.log("Watchdog error:", err.message);
+
+    }
+
+}, 10000);
+
+/* ================= START SERVER ================= */
 
 (async () => {
 
-  await initBrowser();
+    await startBrowser();
 
-  app.listen(port, () => {
+    app.listen(port, () => {
 
-    console.log(`Server running on ${port}`);
+        console.log(`Server running on ${port}`);
 
-  });
+    });
 
 })();
