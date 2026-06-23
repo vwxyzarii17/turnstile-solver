@@ -3,7 +3,7 @@ const { connect } = require('puppeteer-real-browser');
 
 const app = express();
 
-const port = process.env.PORT || 8080;
+const port = process.env.PORT || 7860;
 
 global.timeOut = Number(process.env.timeOut) || 60000;
 
@@ -38,7 +38,34 @@ async function initBrowser() {
 /* ================= CREATE PAGE ================= */
 
 async function createPage() {
-  return browser.newPage();
+
+  const page = await browser.newPage();
+
+  await page.setRequestInterception(true);
+
+  page.on('request', (req) => {
+
+    const type = req.resourceType();
+
+    if (
+      type === 'image' ||
+      type === 'stylesheet' ||
+      type === 'font' ||
+      type === 'media'
+    ) {
+
+      req.abort();
+
+    } else {
+
+      req.continue();
+
+    }
+
+  });
+
+  return page;
+
 }
 
 /* ================= IMPORT ================= */
@@ -113,6 +140,10 @@ app.post('/turnstile', async (req, res) => {
 
   await initBrowser();
 
-  app.listen(port, '0.0.0.0', () => {
-  console.log(`Server running on ${port}`);
-});
+  app.listen(port, () => {
+
+    console.log(`Server running on ${port}`);
+
+  });
+
+})();
