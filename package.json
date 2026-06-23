@@ -1,9 +1,8 @@
 {
   "name": "turnstile-api",
   "version": "1.0.0",
-  "description": "Cloudflare Turnstile Solver API",
+  "description": "Turnstile solver API",
   "main": "index.js",
-  "type": "commonjs",
   "scripts": {
     "start": "node index.js"
   },
