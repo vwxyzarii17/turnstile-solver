@@ -1,8 +1,7 @@
-FROM node:20-bullseye
+FROM node:20-slim
 
 WORKDIR /app
 
-# install minimal deps untuk puppeteer + xvfb
 RUN apt-get update && apt-get install -y \
     xvfb \
     chromium \
@@ -27,13 +26,15 @@ RUN apt-get update && apt-get install -y \
     libxi6 \
     libxtst6 \
     ca-certificates \
-    --no-install-recommends && rm -rf /var/lib/apt/lists/*
+    --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
 
-# pakai chromium, bukan chrome manual
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV NODE_OPTIONS=--max-old-space-size=512
 
 COPY package*.json ./
+
 RUN npm install --omit=dev
 
 COPY . .
