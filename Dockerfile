@@ -1,4 +1,4 @@
-FROM node:20-slim
+FROM node:20-bullseye
 
 WORKDIR /app
 
@@ -38,6 +38,6 @@ RUN npm install --omit=dev
 
 COPY . .
 
-EXPOSE 8080
+EXPOSE 7860
 
 CMD ["node", "index.js"]
