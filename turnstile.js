@@ -1,112 +1,105 @@
 async function turnstile({ domain, siteKey }, page) {
 
-if (!domain) throw new Error("Missing domain parameter");
-if (!siteKey) throw new Error("Missing siteKey parameter");
+    if (!domain)
+        throw new Error("Missing domain");
 
-const timeout = global.timeOut || 60000;
-let isResolved = false;
+    if (!siteKey)
+        throw new Error("Missing siteKey");
 
-const startTime = Date.now();
+    const timeout = global.timeOut || 60000;
 
-const cl = setTimeout(() => {
-if (!isResolved) {
-console.error("Turnstile timeout");
-}
-}, timeout);
+    const start = Date.now();
 
-try {
+    const html = `
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js?onload=onloadCallback" defer></script>
+</head>
 
-const htmlContent = `
+<body>
 
-<!DOCTYPE html><html>
-<body><div class="turnstile"></div><script src="https://challenges.cloudflare.com/turnstile/v0/api.js?onload=onloadTurnstileCallback" defer></script><script>
-window.onloadTurnstileCallback = function() {
+<div id="cf"></div>
 
-  turnstile.render('.turnstile', {
+<script>
 
-    sitekey: '${siteKey}',
+window.onloadCallback = function() {
 
-    callback: function(token) {
+    turnstile.render("#cf", {
 
-      var c = document.createElement('input');
+        sitekey: "${siteKey}",
 
-      c.type = 'hidden';
-      c.name = 'cf-response';
-      c.value = token;
+        callback: function(token){
 
-      document.body.appendChild(c);
+            let input = document.createElement("input");
 
-    }
+            input.name = "cf-response";
 
-  });
+            input.value = token;
 
-};
-</script></body>
-</html>
-`;await page.setRequestInterception(true);
+            document.body.appendChild(input);
 
-page.removeAllListeners("request");
+        }
 
-page.on("request", async (request) => {
-
-  if ([domain, domain + "/"].includes(request.url()) &&
-      request.resourceType() === "document") {
-
-    await request.respond({
-      status: 200,
-      contentType: "text/html",
-      body: htmlContent,
     });
 
-  } else {
-
-    await request.continue();
-
-  }
-
-});
-
-await page.goto(domain, {
-  waitUntil: "domcontentloaded"
-});
-
-await page.waitForSelector('[name="cf-response"]', {
-  timeout
-});
-
-const token = await page.evaluate(() => {
-
-  const el = document.querySelector('[name="cf-response"]');
-
-  return el ? el.value : null;
-
-});
-
-isResolved = true;
-
-clearTimeout(cl);
-
-if (!token || token.length < 10) {
-  throw new Error("Failed to get token");
-}
-
-const solveTime = (
-  (Date.now() - startTime) / 1000
-).toFixed(2);
-
-return {
-  token,
-  solveTime: solveTime + "s"
 };
 
-} catch (e) {
+</script>
 
-clearTimeout(cl);
+</body>
+</html>
+`;
 
-throw e;
+    page.removeAllListeners("request");
 
-}
+    await page.setRequestInterception(true);
 
+    page.on("request", async (request) => {
+
+        if (
+            request.resourceType() === "document" &&
+            request.isNavigationRequest()
+        ) {
+
+            await request.respond({
+                status: 200,
+                contentType: "text/html",
+                body: html
+            });
+
+        } else {
+
+            await request.continue();
+
+        }
+    });
+
+    await page.goto(domain, {
+        waitUntil: "domcontentloaded"
+    });
+
+    await page.waitForSelector("[name='cf-response']", {
+        timeout
+    });
+
+    const token = await page.$eval(
+        "[name='cf-response']",
+        el => el.value
+    );
+
+    if (!token || token.length < 20) {
+        throw new Error("Token not found");
+    }
+
+    return {
+        success: true,
+        token,
+        solveTime: (
+            (Date.now() - start) / 1000
+        ).toFixed(2) + "s"
+    };
 }
 
 module.exports = turnstile;
