@@ -22,7 +22,7 @@ async function initBrowser() {
     const { browser: br } = await connect({
         headless: false,
         turnstile: true,
-        disableXvfb: false,
+        disableXvfb: true,
         args: [
             "--no-sandbox",
             "--disable-setuid-sandbox",
