@@ -1,111 +1,132 @@
 async function turnstile({ domain, siteKey }, page) {
 
-if (!domain) throw new Error("Missing domain parameter");
-if (!siteKey) throw new Error("Missing siteKey parameter");
+    if (!domain)
+        throw new Error("Missing domain parameter");
 
-const timeout = global.timeOut || 60000;
-let isResolved = false;
+    if (!siteKey)
+        throw new Error("Missing siteKey parameter");
 
-const startTime = Date.now();
+    const timeout = global.timeOut || 60000;
 
-const cl = setTimeout(() => {
-if (!isResolved) {
-console.error("Turnstile timeout");
-}
-}, timeout);
+    const startTime = Date.now();
 
-try {
+    const htmlContent = `
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Turnstile Solver</title>
+</head>
+<body>
 
-const htmlContent = `
+<div id="cf-turnstile"></div>
 
-<!DOCTYPE html><html>
-<body><div class="turnstile"></div><script src="https://challenges.cloudflare.com/turnstile/v0/api.js?onload=onloadTurnstileCallback" defer></script><script>
-window.onloadTurnstileCallback = function() {
+<script>
+window.token = null;
+</script>
 
-  turnstile.render('.turnstile', {
+<script
+src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit"
+async defer>
+</script>
 
-    sitekey: '${siteKey}',
+<script>
+window.onload = function () {
 
-    callback: function(token) {
+    turnstile.render("#cf-turnstile", {
 
-      var c = document.createElement('input');
+        sitekey: "${siteKey}",
 
-      c.type = 'hidden';
-      c.name = 'cf-response';
-      c.value = token;
+        callback: function(token) {
 
-      document.body.appendChild(c);
+            window.token = token;
 
-    }
+            const input = document.createElement("input");
 
-  });
+            input.type = "hidden";
+            input.id = "cf-response";
+            input.value = token;
 
-};
-</script></body>
-</html>
-`;await page.setRequestInterception(true);
+            document.body.appendChild(input);
 
-page.removeAllListeners("request");
+        }
 
-page.on("request", async (request) => {
-
-  if ([domain, domain + "/"].includes(request.url()) &&
-      request.resourceType() === "document") {
-
-    await request.respond({
-      status: 200,
-      contentType: "text/html",
-      body: htmlContent,
     });
 
-  } else {
-
-    await request.continue();
-
-  }
-
-});
-
-await page.goto(domain, {
-  waitUntil: "domcontentloaded"
-});
-
-await page.waitForSelector('[name="cf-response"]', {
-  timeout
-});
-
-const token = await page.evaluate(() => {
-
-  const el = document.querySelector('[name="cf-response"]');
-
-  return el ? el.value : null;
-
-});
-
-isResolved = true;
-
-clearTimeout(cl);
-
-if (!token || token.length < 10) {
-  throw new Error("Failed to get token");
-}
-
-const solveTime = (
-  (Date.now() - startTime) / 1000
-).toFixed(2);
-
-return {
-  token,
-  solveTime: solveTime + "s"
 };
+</script>
 
-} catch (e) {
+</body>
+</html>
+`;
 
-clearTimeout(cl);
+    await page.setRequestInterception(true);
 
-throw e;
+    page.removeAllListeners("request");
 
-}
+    page.on("request", (request) => {
+
+        const type = request.resourceType();
+
+        if (
+            type === "image" ||
+            type === "stylesheet" ||
+            type === "font" ||
+            type === "media"
+        ) {
+            return request.abort();
+        }
+
+        if (
+            request.resourceType() === "document" &&
+            [domain, domain + "/"].includes(request.url())
+        ) {
+
+            return request.respond({
+                status: 200,
+                contentType: "text/html",
+                body: htmlContent
+            });
+
+        }
+
+        request.continue();
+
+    });
+
+    await page.goto(domain, {
+        waitUntil: "domcontentloaded",
+        timeout
+    });
+
+    await page.waitForFunction(() => {
+
+        return (
+            window.token &&
+            window.token.length > 10
+        );
+
+    }, {
+        timeout
+    });
+
+    const token = await page.evaluate(() => {
+        return window.token;
+    });
+
+    if (!token) {
+        throw new Error("Failed to obtain token");
+    }
+
+    const solveTime = (
+        (Date.now() - startTime) / 1000
+    ).toFixed(2);
+
+    return {
+        success: true,
+        token,
+        solveTime: solveTime + "s"
+    };
 
 }
 
