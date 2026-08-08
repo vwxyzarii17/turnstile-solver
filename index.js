@@ -1,6 +1,6 @@
 const express = require('express');
 const { connect } = require('puppeteer-real-browser');
-
+const turnstile = require('./Api/turnstile.js');
 const app = express();
 
 const port = process.env.PORT || 7860;
@@ -126,12 +126,9 @@ async function createPage() {
   });
 
   return page;
-
 }
 
-/* ================= IMPORT ================= */
 
-const turnstile = require('./turnstile');
 
 /* ================= API ================= */
 
@@ -139,13 +136,11 @@ app.use(express.json());
 
 /* ================= HEALTH CHECK ================= */
 
-app.get('/', (req, res) => {
-
-  res.json({
-    status: 'running',
+app.get('/health', (req, res) => {
+  res.status(200).json({
+    status: 'ok',
     browser: browserReady
   });
-
 });
 
 app.post('/turnstile', async (req, res) => {
@@ -212,11 +207,9 @@ app.post('/turnstile', async (req, res) => {
 
     await initBrowser();
 
-    app.listen(port, () => {
-
-      console.log(`Server running on ${port}`);
-
-    });
+    app.listen(port, '0.0.0.0', () => {
+  console.log(`Server running on ${port}`);
+});
 
   } catch (e) {
 
